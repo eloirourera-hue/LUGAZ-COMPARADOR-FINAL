@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lugaz Asesoría Energética - Compara tu Ahorro</title>
+    <link href="style.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>LUGAZ ASESORÍA ENERGÉTICA SL</h1>
+        <p class="slogan">Compara tu factura de luz y comprueba tu ahorro.</p>
+        
+        <div class="card" id="lead-card">
+            <h2>Paso 1: ¿Dónde te enviamos la comparativa?</h2>
+            
+            <form id="leadForm" 
+                  action="https://script.google.com/macros/s/AKfycbxLXoTpxazW7bLZvJxlSyKEvQnw6BiAuFp6y5-zazMcZw-Z00j7nD3iFbtosjpZxzO0/exec" 
+                  method="POST" 
+                  target="oculto"
+                  onsubmit="return iniciarEnvio()">
+                
+                <input type="hidden" name="action" value="guardarLead"> 
+                
+                <input type="email" id="email" name="email" placeholder="Email" required>
+                <input type="tel" id="telefono" name="telefono" placeholder="Teléfono Móvil (obligatorio)" pattern="[0-9]{9}" required>
+                
+                <button type="submit" id="submitBtn">Comenzar Ahorro</button>
+                <div id="estado" style="margin-top: 15px; color: #fbbf24; font-weight: 600;"></div>
+            </form>
+        </div>
+    </div>
+    
+    <iframe name="oculto" id="oculto" style="display:none;"></iframe>
+    
+    <script>
+        let intervaloCheck; // Variable para controlar el bucle de comprobación
+        
+        function iniciarEnvio() {
+            const estado = document.getElementById('estado');
+            const submitBtn = document.getElementById('submitBtn');
+            const iframe = document.getElementById('oculto');
+            
+            estado.textContent = '✅ Guardando datos...';
+            submitBtn.disabled = true;
+
+            // Limpiamos el iframe en caso de reintentos
+            iframe.src = 'about:blank'; 
+
+            // Iniciamos la comprobación cada 500ms
+            intervaloCheck = setInterval(comprobarRespuesta, 500);
+            
+            return true; // Continúa con el envío del formulario
+        }
+
+        // Función que comprueba el contenido del IFRAME hasta que encuentra el éxito
+        function comprobarRespuesta() {
+            const estado = document.getElementById('estado');
+            const email = document.getElementById('email').value;
+            const iframe = document.getElementById('oculto');
+            
+            try {
+                // Leemos el contenido del cuerpo del iframe
+                // CRÍTICO: El .trim() elimina espacios en blanco y saltos de línea
+                const respuesta = iframe.contentDocument.body.textContent.trim(); 
+
+                if (respuesta.includes('SUCCESS')) {
+                    // ÉXITO DETECTADO
+                    clearInterval(intervaloCheck); // Detenemos la comprobación
+                    
+                    estado.textContent = '✅ Datos guardados. Redirigiendo...';
+                    
+                    setTimeout(() => {
+                        // Redirige a factura.html
+                        window.location.href = `factura.html?email=${encodeURIComponent(email)}`;
+                    }, 500); 
+
+                } else if (respuesta.includes('ERROR')) {
+                    // ERROR DETECTADO
+                    clearInterval(intervaloCheck); 
+                    estado.textContent = `❌ Error: ${respuesta.split('ERROR:')[1] || 'Fallo de Script'}`;
+                    document.getElementById('submitBtn').disabled = false;
+                }
+            } catch (e) {
+                // Si hay un error, el iframe no ha cargado completamente la respuesta.
+                // Simplemente esperamos el siguiente intento del setInterval.
+            }
+        }
+    </script>
+</body>
+</html>
