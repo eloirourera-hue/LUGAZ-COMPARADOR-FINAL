@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lugaz - Sube tu Factura</title>
+    <link href="style.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+</head>
+<body>
+<div class="container">
+    <div class="card">
+        <h1>Comparativa</h1>
+        <p style="text-align:center;font-size:1.4rem;margin-bottom:30px">Sube tu factura o introduce los datos manualmente</p>
+        
+        <input type="email" id="email" placeholder="Tu email" required>
+        <input type="file" id="factura" accept=".pdf,.jpg,.jpeg,.png">
+        <button onclick="procesar()">¡Calcular ahorro!</button>
+        <div id="estado">Sube tu factura o usa modo manual ↓</div>
+
+        <div class="manual" id="manual">
+            <p>Modo manual (cálculo detallado):</p>
+            <input type="number" id="consumo" placeholder="Consumo total kWh (ej: 320)">
+            <input type="number" step="0.01" id="potencia" placeholder="Potencia contratada kW (ej: 5.75)" value="5.75">
+            <input type="number" step="0.01" id="gasto" placeholder="Gasto actual € (ej: 78.45)">
+            <button onclick="calcularManual()">Calcular</button>
+        </div>
+
+        <div id="resultado" class="resultado"></div>
+    </div>
+</div>
+
+<script>
+    // Variables globales para el cálculo
+    let consumoGlobal = 0;
+    let potenciaGlobal = 0;
+    let gastoActualGlobal = 0;
+    const dias = 30; // Días de media por mes
+    const alquilerGlobal = 0.81; // Coste fijo estimado de alquiler de contador (€/mes)
+    const impuestoElectricidad = 0.05113; // Impuesto de electricidad (5.113%)
+    const iva = 0.21;
+    let tarifas = [];
+
+    // --- FUNCIÓN DE UTILIDAD PARA LEER LA URL ---
+    function getParameterByName(name, url = window.location.href) {
+        name = name.replace(/[\[\]]/g, '\\$&');
+        const regex = new RegExp('[?&]' + name + '(=([^&#]*)|&|#|$)'),
+            results = regex.exec(url);
+        if (!results) return null;
+        if (!results[2]) return '';
+        return decodeURIComponent(results[2].replace(/\+/g, ' '));
+    }
+
+    // --- CÓDIGO DE INICIO (Carga tarifas y comprueba el email) ---
+    document.addEventListener('DOMContentLoaded', () => {
+        // 1. Cargar tarifas del archivo JSON
+        fetch('tarifas.json')
+            .then(r => r.json())
+            .then(data => tarifas = data.tarifas)
+            .catch(e => { 
+                console.error("Error al cargar tarifas.json:", e); 
+                document.getElementById('estado').textContent = "Error al cargar datos de tarifas. Revisa el archivo tarifas.json"; 
+            });
+
+        // 2. Comprobar email de la URL
+        const email = getParameterByName('email');
+        const emailInput = document.getElementById('email');
+
+        if (email) {
+            emailInput.value = email;
+            emailInput.readOnly = true; 
+            emailInput.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+        } else {
+            // Si llegan sin email, los devolvemos al formulario inicial (index.html)
+            window.location.href = 'index.html'; 
+        }
+    });
+
+    // --- 1. PROCESAR FACTURA (Lector OCR) ---
+    async function procesar() {
+        const file = document.getElementById("factura").files[0];
+        const estado = document.getElementById("estado");
+        const manual = document.getElementById("manual");
+
+        if (!file) { manual.style.display = "block"; estado.textContent = "Sube el PDF o imagen."; return; }
+
+        estado.textContent = "Leyendo factura (esto puede tardar unos segundos)...";
+        manual.style.display = "none";
+        
+        try {
+            // Tesseract.js para OCR 
+            const { data: { text } } = await Tesseract.recognize(file, 'spa', { logger: m => m });
+            const t = text.toLowerCase().replace(/[^0-9.,\s]/g, ' ').replace(/,/g, '.');
+
+            // Lógica de extracción de datos
+            const c = t.match(/(\d{3,5})\s*kwh/i);
+            if (c) consumoGlobal = parseInt(c[1]);
+
+            const p = t.match(/(\d+[.,]?\d*)\s*kw/i);
+            if (p) potenciaGlobal = parseFloat(p[1].replace(',', '.'));
+
+            const g = t.match(/(\d{2,4}[.,]\d{2})\s*€/i);
+            if (g) gastoActualGlobal = parseFloat(g[1].replace(',', '.'));
+
+            // Verificar si la extracción fue exitosa
+            if (consumoGlobal === 0 || potenciaGlobal === 0 || gastoActualGlobal === 0) {
+                 estado.textContent = "⚠️ No se pudo extraer la información completa. Rellena manualmente.";
+                 document.getElementById("consumo").value = consumoGlobal || '';
+                 document.getElementById("potencia").value = potenciaGlobal || '';
+                 document.getElementById("gasto").value = gastoActualGlobal || '';
+                 manual.style.display = "block";
+                 return;
+            }
+
+            estado.textContent = `✅ Datos extraídos: Consumo ${consumoGlobal} kWh · Potencia ${potenciaGlobal} kW · Gasto ${gastoActualGlobal.toFixed(2)}€`;
+            calcularFinal(); 
+            
+        } catch (e) {
+            estado.textContent = "❌ Error al leer la factura. Usa modo manual.";
+            manual.style.display = "block";
+        }
+    }
+    
+    // --- 2. CALCULAR MANUALMENTE ---
+    function calcularManual() {
+        consumoGlobal = parseFloat(document.getElementById("consumo").value);
+        potenciaGlobal = parseFloat(document.getElementById("potencia").value);
+        gastoActualGlobal = parseFloat(document.getElementById("gasto").value);
+        
+        if (isNaN(consumoGlobal) || isNaN(potenciaGlobal) || isNaN(gastoActualGlobal)) {
+            document.getElementById("estado").textContent = "Rellena todos los campos de datos manuales.";
+            return;
+        }
+        
+        document.getElementById("manual").style.display = "none";
+        document.getElementById("estado").textContent = "✅ Calculando con datos manuales.";
+
+        calcularFinal();
+    }
+
+    // --- 3. FUNCIÓN FINAL DE CÁLCULO Y RENDERIZADO ---
+    function calcularFinal() {
+        if (tarifas.length === 0) {
+            document.getElementById("estado").textContent = "Error: No se cargaron los datos de tarifas.json.";
+            return;
+        }
+
+        const resultado = document.getElementById("resultado");
+        let html = '<h2 style="grid-column:1/-1;text-align:center;color:#a5f3fc;margin:30px 0">¡Tus mejores ofertas!</h2>';
+
+        tarifas.forEach(t => {
+            // CÁLCULO DETALLADO
+            
+            // 1. Coste de la Energía
+            const precioMedioPonderado = (t.precio_kwh_punta + t.precio_kwh_llano + t.precio_kwh_valle) / 3;
+            const costeEnergia = consumoGlobal * precioMedioPonderado;
+
+            // 2. Coste de la Potencia (La potencia se paga por día)
+            const costePotenciaPunta = potenciaGlobal * t.potencia_punta * dias;
+            const costePotenciaValle = potenciaGlobal * t.potencia_valle * dias;
+            const costePotenciaTotal = costePotenciaPunta + costePotenciaValle;
+
+            // 3. Subtotal sin Impuestos ni Alquiler
+            const baseImponible = costeEnergia + costePotenciaTotal;
+
+            // 4. Impuesto de Electricidad + Alquiler Contador
+            const impuesto = baseImponible * impuestoElectricidad;
+            const subtotalImpuestos = baseImponible + impuesto + alquilerGlobal; 
+
+            // 5. Total con IVA
+            const totalSinDesc = subtotalImpuestos * (1 + iva);
+            
+            // 6. Aplicar descuento (sobre el total)
+            const descuentoAplicado = totalSinDesc * (t.descuento_primer_ano / 100);
+            const totalConDesc = totalSinDesc - descuentoAplicado;
+            
+            // 7. Cálculo de ahorro
+            const ahorroMensual = gastoActualGlobal - totalConDesc;
+            const ahorroAnual = Math.round(ahorroMensual * 12);
+            
+            const claseAhorro = ahorroAnual >= 0 ? 'positivo' : 'negativo';
+            const simboloAhorro = ahorroAnual >= 0 ? '¡Ahorras' : '¡Pagarías';
+            const textoAhorro = `${simboloAhorro} ${Math.abs(ahorroAnual)}€ al año!`;
+
+            html += `
+                <div class="tarifa">
+                    <div class="empresa">${t.empresa}</div>
+                    <div style="color:#94a3b8;margin:8px 0">${t.nombre}</div>
+                    <div class="precio">${totalConDesc.toFixed(0)}€/mes</div>
+                    <div class="ahorro ${claseAhorro}">${textoAhorro}</div>
+                    <div style="margin-top:10px;color:#94a3b8;font-size:0.9rem">-${t.descuento_primer_ano}% primer año</div>
+                </div>
+            `;
+        });
+
+        resultado.innerHTML = html;
+        resultado.style.display = "grid";
+    }
+</script>
+</body>
+</html>
